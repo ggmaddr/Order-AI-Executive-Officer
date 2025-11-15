@@ -3,6 +3,9 @@
 let conversationId = localStorage.getItem('conversationId') || 'conv_' + Date.now();
 localStorage.setItem('conversationId', conversationId);
 
+// Store message IDs for editing
+let messageIdMap = new Map(); // messageId -> MongoDB _id
+
 let menuItemCounter = 0;
 let cakeDesignCounter = 0;
 let exampleCounter = 0;
@@ -17,26 +20,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadChatHistory() {
     try {
+        if (!conversationId) {
+            conversationId = localStorage.getItem('conversationId') || 'conv_' + Date.now();
+            localStorage.setItem('conversationId', conversationId);
+        }
+        
         const response = await fetch(`${API_BASE}/chat/history/${conversationId}`);
+        
+        if (!response.ok) {
+            return;
+        }
+        
         const data = await response.json();
         
         if (data.messages && data.messages.length > 0) {
             const messagesContainer = document.getElementById('chat-messages');
-            // Clear the default welcome message
-            messagesContainer.innerHTML = '';
-            
-            // Load all messages from history
-            data.messages.forEach(msg => {
-                if (msg.role === 'user') {
-                    addMessageToChat(msg.message, 'user');
-                } else if (msg.role === 'bot' && msg.response) {
-                    addMessageToChat(msg.response, 'bot');
-                }
-            });
+            if (messagesContainer) {
+                messagesContainer.innerHTML = '';
+                
+                data.messages.forEach(msg => {
+                    if (msg.role === 'user') {
+                        const msgId = addMessageToChat(msg.message, 'user', msg._id);
+                        if (msg._id) {
+                            messageIdMap.set(msgId, msg._id);
+                        }
+                    } else if (msg.role === 'bot') {
+                        const botMessage = msg.response || msg.message || '...';
+                        addMessageToChat(botMessage, 'bot', msg._id);
+                    }
+                });
+                
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
         }
     } catch (error) {
-        console.log('No chat history found or error loading:', error);
-        // Keep default welcome message
+        // Silently handle errors - keep default welcome message
     }
 }
 
@@ -81,8 +99,14 @@ async function sendMessage() {
     
     if (!message) return;
     
-    // Add user message to chat
-    addMessageToChat(message, 'user');
+    // Ensure conversation ID is set and persisted
+    if (!conversationId) {
+        conversationId = localStorage.getItem('conversationId') || 'conv_' + Date.now();
+    }
+    localStorage.setItem('conversationId', conversationId);
+    
+    // Add user message to chat (temporary, will be replaced with DB ID after save)
+    const userMsgId = addMessageToChat(message, 'user');
     input.value = '';
     
     // Show loading indicator
@@ -102,29 +126,249 @@ async function sendMessage() {
         
         const data = await response.json();
         
+        // Update conversation ID if returned from server
+        if (data.conversation_id) {
+            conversationId = data.conversation_id;
+            localStorage.setItem('conversationId', conversationId);
+        }
+        
         // Remove loading message and add actual response
         removeMessage(loadingId);
-        addMessageToChat(data.response, 'bot');
+        
+        // Reload chat history to get proper message IDs
+        await loadChatHistory();
     } catch (error) {
         removeMessage(loadingId);
         addMessageToChat('Sorry, I encountered an error. Please try again.', 'bot');
-        console.error('Error:', error);
     }
 }
 
-function addMessageToChat(message, type) {
+async function editMessage(messageElementId, dbMessageId, currentText) {
+    const messageDiv = document.getElementById(messageElementId);
+    if (!messageDiv) return;
+    
+    const messageContent = messageDiv.querySelector('.message-content p');
+    if (!messageContent) return;
+    
+    // Create input field for editing
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentText;
+    input.className = 'edit-message-input';
+    input.style.width = '100%';
+    input.style.padding = '8px';
+    input.style.margin = '4px 0';
+    input.style.border = '1px solid rgba(0, 255, 255, 0.3)';
+    input.style.borderRadius = '4px';
+    input.style.background = 'rgba(0, 0, 0, 0.3)';
+    input.style.color = '#fff';
+    
+    // Replace content with input
+    const originalText = messageContent.textContent;
+    messageContent.style.display = 'none';
+    messageContent.parentNode.insertBefore(input, messageContent);
+    input.focus();
+    input.select();
+    
+    // Create save and cancel buttons
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.marginTop = '8px';
+    
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save & Regenerate';
+    saveBtn.className = 'edit-save-btn';
+    saveBtn.style.marginRight = '8px';
+    saveBtn.style.padding = '6px 12px';
+    saveBtn.style.background = 'rgba(0, 255, 255, 0.2)';
+    saveBtn.style.border = '1px solid rgba(0, 255, 255, 0.3)';
+    saveBtn.style.borderRadius = '4px';
+    saveBtn.style.color = '#00ffff';
+    saveBtn.style.cursor = 'pointer';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.className = 'edit-cancel-btn';
+    cancelBtn.style.padding = '6px 12px';
+    cancelBtn.style.background = 'rgba(255, 68, 68, 0.2)';
+    cancelBtn.style.border = '1px solid rgba(255, 68, 68, 0.3)';
+    cancelBtn.style.borderRadius = '4px';
+    cancelBtn.style.color = '#ff6b6b';
+    cancelBtn.style.cursor = 'pointer';
+    
+    buttonContainer.appendChild(saveBtn);
+    buttonContainer.appendChild(cancelBtn);
+    messageContent.parentNode.insertBefore(buttonContainer, messageContent.nextSibling);
+    
+    const cleanup = () => {
+        input.remove();
+        buttonContainer.remove();
+        messageContent.style.display = '';
+    };
+    
+    cancelBtn.onclick = cleanup;
+    
+    input.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            saveBtn.click();
+        } else if (e.key === 'Escape') {
+            cleanup();
+        }
+    };
+    
+    saveBtn.onclick = async () => {
+        const newText = input.value.trim();
+        if (!newText || newText === originalText) {
+            cleanup();
+            return;
+        }
+        
+        // Show loading
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Regenerating...';
+        
+        try {
+            const response = await fetch(`${API_BASE}/chat/edit/${dbMessageId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: newText,
+                    conversation_id: conversationId
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                // Reload chat history to show updated messages
+                await loadChatHistory();
+            } else {
+                alert('Error updating message');
+                cleanup();
+            }
+        } catch (error) {
+            alert('Error updating message');
+            cleanup();
+        }
+    };
+}
+
+function formatMessageContent(text) {
+    // Split by code blocks (```language\ncode\n``` or ```\ncode\n```)
+    const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+        // Add text before code block
+        if (match.index > lastIndex) {
+            const textPart = text.substring(lastIndex, match.index);
+            if (textPart.trim()) {
+                parts.push({ type: 'text', content: textPart });
+            }
+        }
+        
+        // Add code block
+        const language = match[1] || 'text';
+        const code = match[2].trim();
+        if (code) {
+            parts.push({ type: 'code', language: language, content: code });
+        }
+        
+        lastIndex = match.index + match[0].length;
+    }
+    
+    // Add remaining text
+    if (lastIndex < text.length) {
+        const textPart = text.substring(lastIndex);
+        if (textPart.trim()) {
+            parts.push({ type: 'text', content: textPart });
+        }
+    }
+    
+    // If no code blocks found, return original text
+    if (parts.length === 0) {
+        parts.push({ type: 'text', content: text });
+    }
+    
+    return parts;
+}
+
+function addMessageToChat(message, type, dbId = null) {
     const messagesContainer = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
     const messageId = 'msg_' + Date.now() + '_' + Math.random();
     messageDiv.id = messageId;
     messageDiv.className = `message ${type}-message`;
+    if (dbId) {
+        messageDiv.setAttribute('data-db-id', dbId);
+    }
     
-    messageDiv.innerHTML = `
-        <div class="message-content">
-            <p>${escapeHtml(message)}</p>
-        </div>
-    `;
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
     
+    // Format message content (handle code blocks for bot messages)
+    if (type === 'bot' && message.includes('```')) {
+        const parts = formatMessageContent(message);
+        parts.forEach(part => {
+            if (part.type === 'text') {
+                // Format text with line breaks
+                const textDiv = document.createElement('div');
+                textDiv.className = 'message-text';
+                const lines = part.content.split('\n');
+                lines.forEach((line) => {
+                    const p = document.createElement('p');
+                    p.textContent = line || '\u00A0'; // Non-breaking space for empty lines
+                    textDiv.appendChild(p);
+                });
+                messageContent.appendChild(textDiv);
+            } else if (part.type === 'code') {
+                // Create code block
+                const codeContainer = document.createElement('div');
+                codeContainer.className = 'code-block-container';
+                
+                const codeHeader = document.createElement('div');
+                codeHeader.className = 'code-block-header';
+                codeHeader.textContent = part.language || 'code';
+                
+                const codeBlock = document.createElement('pre');
+                codeBlock.className = 'code-block';
+                const codeElement = document.createElement('code');
+                codeElement.textContent = part.content;
+                codeBlock.appendChild(codeElement);
+                
+                codeContainer.appendChild(codeHeader);
+                codeContainer.appendChild(codeBlock);
+                messageContent.appendChild(codeContainer);
+            }
+        });
+    } else {
+        // Simple text message
+        const messageText = document.createElement('div');
+        messageText.className = 'message-text';
+        const lines = message.split('\n');
+        lines.forEach((line, index) => {
+            const p = document.createElement('p');
+            p.textContent = line || '\u00A0';
+            messageText.appendChild(p);
+        });
+        messageContent.appendChild(messageText);
+    }
+    
+    // Add edit button for user messages
+    if (type === 'user' && dbId) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'edit-message-btn';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = 'Edit message';
+        editBtn.onclick = () => editMessage(messageId, dbId, message);
+        messageContent.appendChild(editBtn);
+    }
+    
+    messageDiv.appendChild(messageContent);
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     
@@ -175,7 +419,18 @@ async function loadSystemPrompt() {
     try {
         const response = await fetch(`${API_BASE}/system-prompt`);
         const data = await response.json();
-        document.getElementById('system-prompt-text').value = data.prompt || '';
+        const promptText = data.prompt || '';
+        document.getElementById('system-prompt-text').value = promptText;
+        
+        // Show warning if prompt exists
+        const warningDiv = document.getElementById('system-prompt-warning');
+        if (warningDiv) {
+            if (promptText.trim()) {
+                warningDiv.style.display = 'block';
+            } else {
+                warningDiv.style.display = 'none';
+            }
+        }
     } catch (error) {
         showError('system-prompt-tab', 'Error loading system prompt');
         console.error('Error:', error);
@@ -184,6 +439,15 @@ async function loadSystemPrompt() {
 
 async function saveSystemPrompt() {
     const prompt = document.getElementById('system-prompt-text').value;
+    
+    // Confirm overwrite if there's existing content
+    const currentPrompt = document.getElementById('system-prompt-text').value;
+    if (currentPrompt.trim()) {
+        const confirmOverwrite = confirm('⚠️ This will overwrite your existing system prompt. Continue?');
+        if (!confirmOverwrite) {
+            return;
+        }
+    }
     
     try {
         const response = await fetch(`${API_BASE}/system-prompt`, {
@@ -195,10 +459,25 @@ async function saveSystemPrompt() {
         });
         
         const data = await response.json();
-        showSuccess('system-prompt-tab', 'System prompt saved successfully!');
+        showSuccess('system-prompt-tab', 'System prompt saved and overwritten successfully!');
+        // Hide warning after successful save
+        const warningDiv = document.getElementById('system-prompt-warning');
+        if (warningDiv) {
+            warningDiv.style.display = 'none';
+        }
     } catch (error) {
         showError('system-prompt-tab', 'Error saving system prompt');
         console.error('Error:', error);
+    }
+}
+
+function clearSystemPrompt() {
+    if (confirm('Are you sure you want to clear the system prompt? This cannot be undone unless you have a backup.')) {
+        document.getElementById('system-prompt-text').value = '';
+        const warningDiv = document.getElementById('system-prompt-warning');
+        if (warningDiv) {
+            warningDiv.style.display = 'none';
+        }
     }
 }
 
@@ -213,8 +492,9 @@ async function loadMenu() {
         
         if (data.items && data.items.length > 0) {
             data.items.forEach(item => {
-                addMenuItemToUI(item);
+                addMenuItem(item);
             });
+            menuItemCounter = data.items.length;
         }
     } catch (error) {
         showError('menu-tab', 'Error loading menu');
@@ -497,6 +777,6 @@ function showError(tabId, message) {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Super Receptionist AI Agent initialized');
+    // Application initialized
 });
 

@@ -3,56 +3,7 @@ MongoDB Database Connection and Models
 Handles all database operations for menu, cake designs, and chat history
 """
 
-# Fix DNS resolution issue for MongoDB Atlas connections
-# This must be done BEFORE importing pymongo
-# Fixes issue where dnspython tries to open /etc/resolv.conf
-import dns.resolver
-import dns.asyncresolver
 
-# Configure sync DNS resolver to use Google DNS instead of reading /etc/resolv.conf
-dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ['8.8.8.8']
-
-# Configure async DNS resolver (used by pymongo's AsyncMongoClient)
-try:
-    dns.asyncresolver.default_resolver = dns.asyncresolver.Resolver(configure=False)
-    dns.asyncresolver.default_resolver.nameservers = ['8.8.8.8']
-except:
-    # If asyncresolver doesn't exist or fails, continue
-    pass
-
-# Patch Resolver.__init__ to ALWAYS use our configured nameservers
-# This ensures ANY resolver created (including by pymongo) uses our DNS servers
-_original_resolver_init = dns.resolver.Resolver.__init__
-
-def _patched_resolver_init(self, filename=None, configure=True):
-    """Patched resolver init that ensures nameservers are always set from our config"""
-    # Always call with configure=False to avoid reading /etc/resolv.conf
-    _original_resolver_init(self, filename, configure=False)
-    # Force set nameservers from our pre-configured resolver
-    self.nameservers = ['8.8.8.8']
-    # Set reasonable defaults
-    if not hasattr(self, 'timeout') or self.timeout is None:
-        self.timeout = 5.0
-    if not hasattr(self, 'lifetime') or self.lifetime is None:
-        self.lifetime = 10.0
-
-dns.resolver.Resolver.__init__ = _patched_resolver_init
-
-# Patch asyncresolver.Resolver.__init__ as well
-try:
-    _original_async_resolver_init = dns.asyncresolver.Resolver.__init__
-    def _patched_async_resolver_init(self, filename=None, configure=True):
-        """Patched async resolver init"""
-        _original_async_resolver_init(self, filename, configure=False)
-        self.nameservers = ['8.8.8.8']
-        if not hasattr(self, 'timeout') or self.timeout is None:
-            self.timeout = 5.0
-        if not hasattr(self, 'lifetime') or self.lifetime is None:
-            self.lifetime = 10.0
-    dns.asyncresolver.Resolver.__init__ = _patched_async_resolver_init
-except:
-    pass
 
 from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure
@@ -62,6 +13,10 @@ from datetime import datetime
 import base64
 from io import BytesIO
 from dotenv import load_dotenv
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -78,45 +33,34 @@ async def connect_to_mongo():
     """Connect to MongoDB"""
     global client, db
     try:
-        # Check if connection string is configured
         if not MONGODB_URL or MONGODB_URL.strip() == "":
-            print("⚠️  MongoDB connection string not configured!")
-            print(f"   Please set MONGODB_URL in .env file")
-            print(f"   Example: MONGODB_URL=mongodb://localhost:27018")
-            print(f"   Or MongoDB Atlas: MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/")
+            logger.warning("MongoDB connection string not configured")
             return False
         
-        # Show connection attempt (hide password)
-        display_url = MONGODB_URL.split('@')[-1] if '@' in MONGODB_URL else MONGODB_URL[:30] + "..."
-        print(f"🔌 Connecting to MongoDB: {display_url}")
-        print(f"   Database: {MONGODB_DB_NAME}")
-        
-        # Create client with SSL certificate verification disabled for development
-        # In production, you should use proper SSL certificates
         client = AsyncMongoClient(
             MONGODB_URL, 
             serverSelectionTimeoutMS=30000,
-            tlsAllowInvalidCertificates=True,  # Allow invalid certificates (development only)
-            tlsAllowInvalidHostnames=True      # Allow invalid hostnames (development only)
+            tlsAllowInvalidCertificates=True,
+            tlsAllowInvalidHostnames=True
         )
         db = client.get_database(MONGODB_DB_NAME)
         
-        # Test connection
         await client.admin.command('ping')
-        print(f"✅ Connected to MongoDB: {MONGODB_DB_NAME}")
+        logger.info(f"SUCCESSULLY CONNECTED TO MongoDB: {MONGODB_DB_NAME}")
         return True
     except ConnectionFailure as e:
-        print(f"❌ Failed to connect to MongoDB: {e}")
+        logger.error(f"FAILED TO CONNECT TO MongoDB: {e}")
         return False
-
-        
+    except Exception as e:
+        logger.error(f"MongoDB connection error: {e}")
+        return False
 
 async def close_mongo_connection():
     """Close MongoDB connection"""
     global client
     if client:
         await client.close()
-        print("MongoDB connection closed")
+        logger.info("MongoDB connection closed")
 
 # Collections
 def get_menu_collection():
@@ -135,6 +79,18 @@ def get_images_collection():
     """Get GridFS collection for images"""
     return db.get_collection("images")
 
+def get_orders_collection():
+    """Get orders collection"""
+    return db.get_collection("orders")
+
+def get_order_details_collection():
+    """Get order details collection"""
+    return db.get_collection("order_details")
+
+def get_order_summaries_collection():
+    """Get order summaries collection"""
+    return db.get_collection("order_summaries")
+
 # Menu Operations
 async def get_all_menu_items() -> List[Dict]:
     """Get all menu items"""
@@ -149,14 +105,14 @@ async def get_all_menu_items() -> List[Dict]:
             item['_id'] = str(item['_id'])
         return items
     except Exception as e:
-        print(f"Error getting menu items: {e}")
+        logger.error(f"Error getting menu items: {e}")
         return []
 
 async def save_menu_items(items: List[Dict]):
     """Save menu items (replace all)"""
     try:
         if db is None:
-            print("⚠️  MongoDB not connected. Menu items not saved.")
+            logger.warning("MongoDB not connected. Menu items not saved.")
             return False
         collection = get_menu_collection()
         # Delete all existing items
@@ -166,7 +122,7 @@ async def save_menu_items(items: List[Dict]):
             await collection.insert_many(items)
         return True
     except Exception as e:
-        print(f"Error saving menu items: {e}")
+        logger.error(f"Error saving menu items: {e}")
         return False
 
 # Cake Designs Operations
@@ -186,14 +142,14 @@ async def get_all_cake_designs() -> List[Dict]:
                 design['image_url'] = f"data:image/png;base64,{base64.b64encode(design['image_data']).decode()}"
         return designs
     except Exception as e:
-        print(f"Error getting cake designs: {e}")
+        logger.error(f"Error getting cake designs: {e}")
         return []
 
 async def save_cake_designs(designs: List[Dict]):
     """Save cake designs with image handling"""
     try:
         if db is None:
-            print("⚠️  MongoDB not connected. Cake designs not saved.")
+            logger.warning("MongoDB not connected. Cake designs not saved.")
             return False
         collection = get_cake_designs_collection()
         # Delete all existing designs
@@ -218,7 +174,7 @@ async def save_cake_designs(designs: List[Dict]):
                     design_doc['image_data'] = image_data
                     design_doc['image_url'] = None  # Don't store URL if we have binary
                 except Exception as e:
-                    print(f"Error processing image for design {design.get('design_id')}: {e}")
+                    logger.warning(f"Error processing image for design {design.get('design_id')}: {e}")
             
             designs_to_insert.append(design_doc)
         
@@ -226,15 +182,15 @@ async def save_cake_designs(designs: List[Dict]):
             await collection.insert_many(designs_to_insert)
         return True
     except Exception as e:
-        print(f"Error saving cake designs: {e}")
+        logger.error(f"Error saving cake designs: {e}")
         return False
 
 # Chat History Operations
 async def save_chat_message(conversation_id: str, role: str, message: str, response: Optional[str] = None):
-    """Save a chat message to history"""
+    """Save a chat message to history - ALWAYS saves to maintain full history"""
     try:
         if db is None:
-            return False  # Silently fail if MongoDB not connected
+            return False
         collection = get_chat_history_collection()
         chat_doc = {
             'conversation_id': conversation_id,
@@ -246,23 +202,25 @@ async def save_chat_message(conversation_id: str, role: str, message: str, respo
         await collection.insert_one(chat_doc)
         return True
     except Exception as e:
-        print(f"Error saving chat message: {e}")
+        logger.error(f"Error saving chat message: {e}")
         return False
 
-async def get_chat_history(conversation_id: str, limit: int = 100) -> List[Dict]:
-    """Get chat history for a conversation"""
+async def get_chat_history(conversation_id: str, limit: int = 10000) -> List[Dict]:
+    """Get chat history for a conversation - returns ALL messages to maintain full history"""
     try:
         if db is None:
             return []
         collection = get_chat_history_collection()
+        # Get ALL messages, sorted by timestamp - no limit to get complete history
         cursor = collection.find(
             {'conversation_id': conversation_id}
-        ).sort('timestamp', 1).limit(limit)
-        messages = await cursor.to_list(length=limit)
+        ).sort('timestamp', 1)
+        messages = await cursor.to_list(length=limit)  # Large limit to get all messages
         # Convert ObjectId to string and format for frontend
         formatted_messages = []
         for msg in messages:
             formatted_messages.append({
+                '_id': str(msg['_id']),
                 'role': msg['role'],
                 'message': msg['message'],
                 'response': msg.get('response'),
@@ -270,7 +228,7 @@ async def get_chat_history(conversation_id: str, limit: int = 100) -> List[Dict]
             })
         return formatted_messages
     except Exception as e:
-        print(f"Error getting chat history: {e}")
+        logger.error(f"Error getting chat history: {e}")
         return []
 
 async def get_all_conversations() -> List[str]:
@@ -282,7 +240,7 @@ async def get_all_conversations() -> List[str]:
         conversations = await collection.distinct('conversation_id')
         return conversations
     except Exception as e:
-        print(f"Error getting conversations: {e}")
+        logger.error(f"Error getting conversations: {e}")
         return []
 
 async def delete_conversation(conversation_id: str):
@@ -294,6 +252,191 @@ async def delete_conversation(conversation_id: str):
         result = await collection.delete_many({'conversation_id': conversation_id})
         return result.deleted_count > 0
     except Exception as e:
-        print(f"Error deleting conversation: {e}")
+        logger.error(f"Error deleting conversation: {e}")
         return False
+
+async def update_chat_message(message_id: str, new_message: str) -> Optional[Dict]:
+    """Update a chat message and return the updated message"""
+    try:
+        if db is None:
+            return None
+        from bson import ObjectId
+        collection = get_chat_history_collection()
+        
+        # Update the message
+        result = await collection.update_one(
+            {'_id': ObjectId(message_id)},
+            {'$set': {'message': new_message, 'updated_at': datetime.utcnow()}}
+        )
+        
+        if result.modified_count > 0:
+            # Get the updated message
+            updated_msg = await collection.find_one({'_id': ObjectId(message_id)})
+            if updated_msg:
+                return {
+                    '_id': str(updated_msg['_id']),
+                    'role': updated_msg['role'],
+                    'message': updated_msg['message'],
+                    'response': updated_msg.get('response'),
+                    'timestamp': updated_msg['timestamp'].isoformat() if 'timestamp' in updated_msg else None
+                }
+        return None
+    except Exception as e:
+        logger.error(f"Error updating chat message: {e}")
+        return None
+
+async def delete_messages_after(message_id: str, conversation_id: str) -> bool:
+    """Delete all messages after a given message ID (for regeneration)"""
+    try:
+        if db is None:
+            return False
+        from bson import ObjectId
+        collection = get_chat_history_collection()
+        
+        # Get the timestamp of the message to delete after
+        message = await collection.find_one({'_id': ObjectId(message_id)})
+        if not message:
+            return False
+        
+        message_timestamp = message.get('timestamp')
+        if not message_timestamp:
+            return False
+        
+        # Delete all messages after this timestamp in the same conversation
+        result = await collection.delete_many({
+            'conversation_id': conversation_id,
+            'timestamp': {'$gt': message_timestamp}
+        })
+        
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting messages after: {e}")
+        return False
+
+# ============================================================================
+# ORDERS OPERATIONS
+# ============================================================================
+# TODO: Review and implement order operations based on mongodb_schemas.py
+
+async def create_order(order_data: Dict) -> bool:
+    """Create a new order"""
+    try:
+        if db is None:
+            logger.warning("MongoDB not connected. Order not saved.")
+            return False
+        collection = get_orders_collection()
+        # Add timestamps
+        order_data['created_at'] = datetime.utcnow()
+        order_data['updated_at'] = datetime.utcnow()
+        await collection.insert_one(order_data)
+        return True
+    except Exception as e:
+        logger.error(f"Error creating order: {e}")
+        return False
+
+async def get_order(order_id: str) -> Optional[Dict]:
+    """Get a specific order by order_id"""
+    try:
+        if db is None:
+            return None
+        collection = get_orders_collection()
+        order = await collection.find_one({'order_id': order_id})
+        if order:
+            order['_id'] = str(order['_id'])
+        return order
+    except Exception as e:
+        logger.error(f"Error getting order: {e}")
+        return None
+
+async def get_all_orders(limit: int = 1000) -> List[Dict]:
+    """Get all orders"""
+    try:
+        if db is None:
+            return []
+        collection = get_orders_collection()
+        cursor = collection.find({}).sort('date_time', -1).limit(limit)
+        orders = await cursor.to_list(length=limit)
+        for order in orders:
+            order['_id'] = str(order['_id'])
+        return orders
+    except Exception as e:
+        logger.error(f"Error getting orders: {e}")
+        return []
+
+# ============================================================================
+# ORDER DETAILS OPERATIONS
+# ============================================================================
+# TODO: Review and implement order details operations based on mongodb_schemas.py
+
+async def create_order_details(order_details: List[Dict]) -> bool:
+    """Create order details for an order"""
+    try:
+        if db is None:
+            logger.warning("MongoDB not connected. Order details not saved.")
+            return False
+        collection = get_order_details_collection()
+        # Add timestamps
+        for detail in order_details:
+            detail['created_at'] = datetime.utcnow()
+        await collection.insert_many(order_details)
+        return True
+    except Exception as e:
+        logger.error(f"Error creating order details: {e}")
+        return False
+
+async def get_order_details_by_order_id(order_id: str) -> List[Dict]:
+    """Get all order details for a specific order"""
+    try:
+        if db is None:
+            return []
+        collection = get_order_details_collection()
+        cursor = collection.find({'order_id': order_id})
+        details = await cursor.to_list(length=1000)
+        for detail in details:
+            detail['_id'] = str(detail['_id'])
+        return details
+    except Exception as e:
+        logger.error(f"Error getting order details: {e}")
+        return []
+
+async def create_order_summary(summary_data: Dict) -> bool:
+    """Create or update order summary"""
+    try:
+        if db is None:
+            logger.warning("MongoDB not connected. Summary not saved.")
+            return False
+        collection = get_order_summaries_collection()
+        # Use upsert to update if exists, insert if not
+        await collection.update_one(
+            {
+                'summary_date': summary_data['summary_date'],
+                'product_type': summary_data['product_type']
+            },
+            {'$set': summary_data},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error creating order summary: {e}")
+        return False
+
+async def get_order_summaries_by_date(start_date: datetime, end_date: datetime) -> List[Dict]:
+    """Get order summaries for a date range"""
+    try:
+        if db is None:
+            return []
+        collection = get_order_summaries_collection()
+        cursor = collection.find({
+            'summary_date': {
+                '$gte': start_date,
+                '$lte': end_date
+            }
+        }).sort('summary_date', 1)
+        summaries = await cursor.to_list(length=1000)
+        for summary in summaries:
+            summary['_id'] = str(summary['_id'])
+        return summaries
+    except Exception as e:
+        logger.error(f"Error getting order summaries: {e}")
+        return []
 

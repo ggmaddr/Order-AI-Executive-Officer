@@ -53,11 +53,15 @@
                 <!-- System Prompt Tab -->
                 <div id="system-prompt-tab" class="training-tab-content active">
                     <h3>Fine-tune System Prompt</h3>
-                    <p class="description">Customize how your AI agent behaves and responds. This prompt will guide the AI's behavior.</p>
+                    <p class="description">Customize how your AI agent behaves and responds. This prompt will guide the AI's behavior. <strong>Note:</strong> Saving will overwrite the existing prompt.</p>
                     <textarea id="system-prompt-text" rows="15" placeholder="Enter your system prompt here..."></textarea>
                     <div class="button-group">
-                        <button onclick="loadSystemPrompt()">Load Current</button>
-                        <button onclick="saveSystemPrompt()" class="primary">Save Prompt</button>
+                        <button onclick="loadSystemPrompt()">Load Current Prompt</button>
+                        <button onclick="saveSystemPrompt()" class="primary">Save & Overwrite Prompt</button>
+                        <button onclick="clearSystemPrompt()" style="background: rgba(255, 68, 68, 0.1); color: #ff6b6b; border-color: rgba(255, 68, 68, 0.3);">Clear</button>
+                    </div>
+                    <div id="system-prompt-warning" style="margin-top: 10px; padding: 10px; background: rgba(255, 193, 7, 0.1); border: 1px solid rgba(255, 193, 7, 0.3); border-radius: 6px; color: #ffc107; display: none;">
+                        ⚠️ Warning: This will overwrite your existing system prompt. Make sure to save a backup if needed.
                     </div>
                 </div>
 

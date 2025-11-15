@@ -18,10 +18,18 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict
 import json
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import database
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -55,9 +63,7 @@ AI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai")  # Options: "openai", "anthropic", "custom"
 
 if not AI_API_KEY:
-    print("⚠️  WARNING: AI_API_KEY not found in environment variables!")
-    print("   Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or AI_API_KEY in your .env file")
-    print("   The chatbot will work but with placeholder responses.")
+    logger.warning("AI_API_KEY not found in environment variables")
 
 # CORS middleware for frontend communication
 app.add_middleware(
@@ -184,6 +190,8 @@ async def chat(message: ChatMessage):
             f"I received your message: '{message.message}'. "
             "⚠️ AI API key not configured. Please add your API key to use the AI agent."
         )
+        # Save fallback response to history
+        await database.save_chat_message(conversation_id, "bot", message.message, response_text)
     else:
         # ========================================================================
         # EXAMPLE: OpenAI Integration
@@ -210,7 +218,7 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                 # Fallback to valid model if invalid model specified
                 valid_models = ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo", "gpt-4o-2024-05-13"]
                 if model not in valid_models and not model.startswith("gpt-3.5") and not model.startswith("gpt-4o"):
-                    print(f"⚠️  Warning: Model '{model}' may not be valid. Using 'gpt-4o-mini' as fallback.")
+                    logger.warning(f"Model '{model}' may not be valid. Using 'gpt-4o-mini' as fallback.")
                     model = "gpt-4o-mini"
                 
                 response = client.chat.completions.create(
@@ -241,6 +249,8 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                     )
                 else:
                     response_text = f"Error calling AI API: {error_msg}"
+                # Save error response to history - ALWAYS save to maintain full history
+                await database.save_chat_message(conversation_id, "bot", message.message, response_text)
         
         # ========================================================================
         # EXAMPLE: Anthropic Integration
@@ -274,11 +284,13 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                 )
                 response_text = response.content[0].text
                 
-                # Save bot response to chat history
+                # Save bot response to chat history - ALWAYS save to maintain full history
                 await database.save_chat_message(conversation_id, "bot", message.message, response_text)
                 
             except Exception as e:
                 response_text = f"Error calling AI API: {str(e)}"
+                # Save error response to history
+                await database.save_chat_message(conversation_id, "bot", message.message, response_text)
         
         # ========================================================================
         # Add your custom AI provider here
@@ -289,6 +301,8 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                 "Please configure OPENAI_API_KEY or ANTHROPIC_API_KEY, "
                 "or implement your custom provider."
             )
+            # Save error response to history
+            await database.save_chat_message(conversation_id, "bot", message.message, response_text)
     
     return ChatResponse(
         response=response_text,
@@ -302,9 +316,17 @@ async def get_system_prompt():
 
 @app.post("/api/system-prompt")
 async def update_system_prompt(update: SystemPromptUpdate):
-    """Update system prompt for fine-tuning"""
+    """Update system prompt for fine-tuning - overwrites existing prompt"""
     save_json_file(SYSTEM_PROMPT_FILE, {"prompt": update.prompt})
     return {"status": "success", "message": "System prompt updated successfully"}
+
+@app.get("/api/system-prompt/history")
+async def get_system_prompt_history():
+    """Get system prompt history/versions (if you want to track changes)"""
+    # TODO: Implement prompt version history if needed
+    # For now, just return current prompt
+    current = load_json_file(SYSTEM_PROMPT_FILE, {"prompt": ""})
+    return {"history": [{"version": 1, "prompt": current.get("prompt", ""), "updated_at": "current"}]}
 
 @app.get("/api/menu")
 async def get_menu():
@@ -313,7 +335,7 @@ async def get_menu():
         items = await database.get_all_menu_items()
         return {"items": items}
     except Exception as e:
-        print(f"Error getting menu: {e}")
+        logger.error(f"Error getting menu: {e}")
         return {"items": []}
 
 @app.post("/api/menu")
@@ -336,7 +358,7 @@ async def get_cake_designs():
         designs = await database.get_all_cake_designs()
         return {"designs": designs}
     except Exception as e:
-        print(f"Error getting cake designs: {e}")
+        logger.error(f"Error getting cake designs: {e}")
         return {"designs": []}
 
 @app.post("/api/cake-designs")
@@ -380,12 +402,120 @@ async def upload_image(file: UploadFile = File(...)):
 # Chat History Endpoints
 @app.get("/api/chat/history/{conversation_id}")
 async def get_chat_history(conversation_id: str):
-    """Get chat history for a conversation"""
+    """Get chat history for a conversation - returns ALL messages to maintain full history"""
     try:
-        messages = await database.get_chat_history(conversation_id)
-        return {"messages": messages}
+        messages = await database.get_chat_history(conversation_id, limit=10000)  # Get all messages
+        return {"messages": messages, "count": len(messages), "conversation_id": conversation_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting chat history: {str(e)}")
+
+@app.post("/api/chat/edit/{message_id}")
+async def edit_chat_message(message_id: str, edit_request: Dict):
+    """Edit a chat message and regenerate AI response"""
+    try:
+        new_message = edit_request.get("message")
+        conversation_id = edit_request.get("conversation_id")
+        
+        if not new_message or not conversation_id:
+            raise HTTPException(status_code=400, detail="Message and conversation_id required")
+        
+        # Update the message in database
+        updated_msg = await database.update_chat_message(message_id, new_message)
+        if not updated_msg:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Delete all messages after this one (to regenerate from this point)
+        await database.delete_messages_after(message_id, conversation_id)
+        
+        # Regenerate AI response
+        # Load system prompt and training data
+        system_prompt_data = load_json_file(SYSTEM_PROMPT_FILE, {})
+        system_prompt = system_prompt_data.get("prompt", "")
+        menu_items = await database.get_all_menu_items()
+        cake_designs = await database.get_all_cake_designs()
+        conversion_instructions_data = load_json_file(CONVERSION_INSTRUCTIONS_FILE, {})
+        
+        # Build context
+        context = f"""
+System Prompt: {system_prompt}
+
+Shop Menu: {json.dumps(menu_items, indent=2)}
+Cake Designs: {json.dumps(cake_designs, indent=2)}
+Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
+"""
+        
+        # Generate new response
+        response_text = ""
+        if not AI_API_KEY:
+            response_text = (
+                f"I received your message: '{new_message}'. "
+                "⚠️ AI API key not configured. Please add your API key to use the AI agent."
+            )
+            await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+        else:
+            if AI_PROVIDER.lower() == "openai":
+                try:
+                    from openai import OpenAI
+                    client = OpenAI(api_key=AI_API_KEY)
+                    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                    
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": context},
+                            {"role": "user", "content": new_message}
+                        ],
+                        temperature=0.7,
+                        max_tokens=1000
+                    )
+                    response_text = response.choices[0].message.content
+                    await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+                except Exception as e:
+                    error_msg = str(e)
+                    if "model_not_found" in error_msg or "does not exist" in error_msg:
+                        response_text = (
+                            f"❌ Model Error: The model '{model}' is not available.\n\n"
+                            f"✅ Valid models: gpt-4o-mini, gpt-3.5-turbo, gpt-4o, gpt-4-turbo"
+                        )
+                    else:
+                        response_text = f"Error calling AI API: {error_msg}"
+                    await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+            elif AI_PROVIDER.lower() == "anthropic":
+                try:
+                    import anthropic
+                    client = anthropic.Anthropic(api_key=AI_API_KEY)
+                    response = client.messages.create(
+                        model=os.getenv("ANTHROPIC_MODEL", "claude-3-opus-20240229"),
+                        max_tokens=1000,
+                        system=context,
+                        messages=[
+                            {"role": "user", "content": new_message}
+                        ]
+                    )
+                    response_text = response.content[0].text
+                    await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+                except Exception as e:
+                    response_text = f"Error calling AI API: {str(e)}"
+                    await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+            else:
+                response_text = (
+                    f"AI Provider '{AI_PROVIDER}' not implemented. "
+                    "Please configure OPENAI_API_KEY or ANTHROPIC_API_KEY."
+                )
+                await database.save_chat_message(conversation_id, "bot", new_message, response_text)
+        
+        # Get updated history
+        messages = await database.get_chat_history(conversation_id, limit=10000)
+        
+        return {
+            "status": "success",
+            "updated_message": updated_msg,
+            "new_response": response_text,
+            "messages": messages
+        }
+    except Exception as e:
+        logger.error(f"Error editing chat message: {e}")
+        raise HTTPException(status_code=500, detail=f"Error editing message: {str(e)}")
 
 @app.get("/api/chat/conversations")
 async def get_all_conversations():

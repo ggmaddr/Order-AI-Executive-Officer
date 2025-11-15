@@ -174,6 +174,48 @@ nav {
     padding: 12px 18px;
     border-radius: 18px;
     word-wrap: break-word;
+    position: relative;
+}
+
+.edit-message-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(0, 255, 255, 0.1);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    color: #00ffff;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.user-message:hover .edit-message-btn {
+    opacity: 1;
+}
+
+.edit-message-btn:hover {
+    background: rgba(0, 255, 255, 0.2);
+}
+
+.edit-message-input {
+    width: 100%;
+    padding: 8px;
+    margin: 4px 0;
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    color: #fff;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+.edit-message-input:focus {
+    outline: none;
+    border-color: rgba(0, 255, 255, 0.6);
+    box-shadow: 0 0 8px rgba(0, 255, 255, 0.2);
 }
 
 .user-message .message-content {
@@ -193,6 +235,68 @@ nav {
 
 .bot-message .message-content p {
     color: var(--text-primary);
+    margin: 4px 0;
+    line-height: 1.6;
+}
+
+.message-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.code-block-container {
+    margin: 12px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.code-block-header {
+    background: rgba(0, 255, 255, 0.1);
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #00ffff;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.code-block {
+    margin: 0;
+    padding: 16px;
+    overflow-x: auto;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+}
+
+.code-block code {
+    font-family: 'Courier New', 'Monaco', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #e0e0e0;
+    display: block;
+    white-space: pre;
+    word-wrap: normal;
+}
+
+.code-block::-webkit-scrollbar {
+    height: 8px;
+}
+
+.code-block::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+}
+
+.code-block::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+}
+
+.code-block::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 255, 255, 0.5);
 }
 
 .chat-input-container {
