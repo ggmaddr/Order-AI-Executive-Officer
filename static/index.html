@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Receptionist - AI Agent</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Super Receptionist AI Agent</h1>
+            <nav>
+                <button class="nav-btn active" onclick="showSection('chat')">Chat</button>
+                <button class="nav-btn" onclick="showSection('training')">Training</button>
+            </nav>
+        </header>
+
+        <!-- Chat Section -->
+        <section id="chat-section" class="section active">
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message bot-message">
+                        <div class="message-content">
+                            <p>Hello! I'm your AI assistant for order processing. How can I help you today?</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <div class="input-wrapper">
+                        <input type="text" id="chat-input" placeholder="Type your message here..." onkeypress="handleKeyPress(event)">
+                        <button id="send-btn" onclick="sendMessage()">Send</button>
+                        <button id="upload-btn" onclick="document.getElementById('file-input').click()" title="Upload screenshot">
+                            📷
+                        </button>
+                        <input type="file" id="file-input" accept="image/*" style="display: none;" onchange="handleFileUpload(event)">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Training Section -->
+        <section id="training-section" class="section">
+            <div class="training-container">
+                <h2>Train Your AI Agent</h2>
+                <div class="training-tabs">
+                    <button class="tab-btn active" onclick="showTrainingTab('system-prompt')">System Prompt</button>
+                    <button class="tab-btn" onclick="showTrainingTab('menu')">Shop Menu</button>
+                    <button class="tab-btn" onclick="showTrainingTab('cake-designs')">Cake Designs</button>
+                    <button class="tab-btn" onclick="showTrainingTab('conversion')">Conversion Instructions</button>
+                </div>
+
+                <!-- System Prompt Tab -->
+                <div id="system-prompt-tab" class="training-tab-content active">
+                    <h3>Fine-tune System Prompt</h3>
+                    <p class="description">Customize how your AI agent behaves and responds. This prompt will guide the AI's behavior.</p>
+                    <textarea id="system-prompt-text" rows="15" placeholder="Enter your system prompt here..."></textarea>
+                    <div class="button-group">
+                        <button onclick="loadSystemPrompt()">Load Current</button>
+                        <button onclick="saveSystemPrompt()" class="primary">Save Prompt</button>
+                    </div>
+                </div>
+
+                <!-- Menu Tab -->
+                <div id="menu-tab" class="training-tab-content">
+                    <h3>Shop Menu Training</h3>
+                    <p class="description">Add your shop's menu items. The AI will use this information to recognize products in orders.</p>
+                    <div id="menu-items-container">
+                        <!-- Menu items will be dynamically added here -->
+                    </div>
+                    <button onclick="addMenuItem()" class="add-btn">+ Add Menu Item</button>
+                    <div class="button-group">
+                        <button onclick="loadMenu()">Load Current Menu</button>
+                        <button onclick="saveMenu()" class="primary">Save Menu</button>
+                    </div>
+                </div>
+
+                <!-- Cake Designs Tab -->
+                <div id="cake-designs-tab" class="training-tab-content">
+                    <h3>Personalized Cake Designs</h3>
+                    <p class="description">Add your personalized cake designs. Include design IDs, names, and descriptions.</p>
+                    <div id="cake-designs-container">
+                        <!-- Cake designs will be dynamically added here -->
+                    </div>
+                    <button onclick="addCakeDesign()" class="add-btn">+ Add Cake Design</button>
+                    <div class="button-group">
+                        <button onclick="loadCakeDesigns()">Load Current Designs</button>
+                        <button onclick="saveCakeDesigns()" class="primary">Save Designs</button>
+                    </div>
+                </div>
+
+                <!-- Conversion Instructions Tab -->
+                <div id="conversion-tab" class="training-tab-content">
+                    <h3>Screenshot to JSON Conversion Instructions</h3>
+                    <p class="description">Provide instructions on how to convert text screenshots between you and clients into JSON format and populate spreadsheets.</p>
+                    <textarea id="conversion-instructions-text" rows="15" placeholder="Enter your conversion instructions here..."></textarea>
+                    <h4>Examples (Optional)</h4>
+                    <div id="examples-container">
+                        <!-- Examples will be dynamically added here -->
+                    </div>
+                    <button onclick="addExample()" class="add-btn">+ Add Example</button>
+                    <div class="button-group">
+                        <button onclick="loadConversionInstructions()">Load Current Instructions</button>
+                        <button onclick="saveConversionInstructions()" class="primary">Save Instructions</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>&copy; Copyright <a href="#" target="_blank">drgrillwagyu.com</a>. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
+
