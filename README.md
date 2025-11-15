@@ -2,135 +2,163 @@
 
 An AI-powered order processing system that extracts information from order confirmation screenshots, converts them to structured JSON, and populates spreadsheets automatically.
 
-## Features
+## ✨ Features
 
-### 1. Chatbot UI
-- Interactive chat interface for communicating with the AI agent
+### 🤖 AI Chatbot
+- Interactive chat interface with persistent conversation history
 - Image upload support for order confirmation screenshots
-- Real-time conversation handling
+- Real-time conversation handling with AI agent
 
-### 2. Training Interfaces
-The system provides four training interfaces for shop owners to customize the AI agent:
+### 📊 Persistent Data Storage (MongoDB)
+- **Menu Items**: Saved forever in MongoDB
+- **Cake Designs**: Images stored in MongoDB with binary data support
+- **Chat History**: All conversations persist across restarts
+- **Persistent Conversations**: Same conversation ID across sessions
 
-#### System Prompt Fine-tuning
-- Customize how the AI agent behaves and responds
-- Define the agent's role and instructions
+### 🎓 Training Interfaces
+Four training interfaces for shop owners to customize the AI agent:
 
-#### Shop Menu Training
-- Add menu items with names, descriptions, prices, and categories
-- Train the AI to recognize products in orders
+1. **System Prompt Fine-tuning** - Customize AI behavior
+2. **Shop Menu Training** - Add menu items with prices and categories
+3. **Personalized Cake Designs** - Add custom designs with images
+4. **Conversion Instructions** - Define screenshot-to-JSON conversion rules
 
-#### Personalized Cake Designs
-- Add custom cake designs with IDs, names, descriptions, and images
-- Help the AI identify specific design requests
+## 🚀 Quick Start
 
-#### Conversion Instructions
-- Provide instructions on converting text screenshots to JSON format
-- Add examples for better AI understanding
-- Define how to populate spreadsheets with extracted data
+### Prerequisites
+- Python 3.8+
+- MongoDB (local or Atlas cloud)
+- OpenAI API key (or Anthropic)
 
-## Installation
+### Installation
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd SuperReceptionist
-```
+1. **Clone and setup:**
+   ```bash
+   cd SuperReceptionist
+   ./setup_mongodb.sh
+   ```
 
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+2. **Configure `.env` file:**
+   ```env
+   # AI Configuration
+   OPENAI_API_KEY=sk-your-key-here
+   OPENAI_MODEL=gpt-4o-mini
+   AI_PROVIDER=openai
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+   # MongoDB Configuration
+   MONGODB_URL=mongodb://localhost:27017
+   MONGODB_DB_NAME=super_receptionist
 
-4. Create a `.env` file (optional, for API keys):
-```bash
-cp .env.example .env
-# Edit .env and add your API keys
-```
+   # Server
+   PORT=8891
+   ```
 
-## Running the Application
+3. **Start the application:**
+   ```bash
+   python3 app.py
+   ```
 
-Start the FastAPI server:
-```bash
-python app.py
-```
+4. **Open in browser:**
+   ```
+   http://localhost:8891
+   ```
 
-Or using uvicorn directly:
-```bash
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
-```
+## 📚 Documentation
 
-Then open your browser and navigate to:
-```
-http://localhost:8000
-```
+- **[QUICK_START.md](QUICK_START.md)** - Complete setup guide
+- **[MONGODB_SETUP.md](MONGODB_SETUP.md)** - MongoDB installation and configuration
+- **[API_KEY_SETUP.md](API_KEY_SETUP.md)** - AI API key configuration
+- **[PORT_MANAGEMENT.md](PORT_MANAGEMENT.md)** - Port management guide
 
-## Project Structure
+## 🏗️ Project Structure
 
 ```
 SuperReceptionist/
 ├── app.py                 # Main FastAPI application
+├── database.py            # MongoDB database operations
 ├── requirements.txt       # Python dependencies
-├── README.md             # This file
+├── setup_mongodb.sh       # MongoDB setup script
 ├── static/               # Frontend files
 │   ├── index.html        # Main UI
-│   ├── styles.css        # Styling
-│   └── script.js         # Frontend logic
-└── data/                 # Data storage (created at runtime)
-    └── training/         # Training data
-        ├── system_prompt.json
-        ├── menu.json
-        ├── cake_designs.json
-        └── conversion_instructions.json
+│   ├── styles.css        # Dark modern scientific theme
+│   └── script.js         # Frontend logic with localStorage
+└── data/                 # Local data (backup, not used with MongoDB)
+    └── training/         # Training data (legacy JSON files)
 ```
 
-## Workflow
+## 🔌 API Endpoints
+
+### Chat
+- `POST /api/chat` - Send message to chatbot
+- `GET /api/chat/history/{conversation_id}` - Get chat history
+- `GET /api/chat/conversations` - List all conversations
+- `DELETE /api/chat/history/{conversation_id}` - Delete conversation
+- `POST /api/upload-image` - Upload image for processing
+
+### Training
+- `GET/POST /api/system-prompt` - System prompt management
+- `GET/POST /api/menu` - Menu items (MongoDB)
+- `GET/POST /api/cake-designs` - Cake designs (MongoDB)
+- `GET/POST /api/conversion-instructions` - Conversion instructions
+
+## 💾 Data Persistence
+
+All data is stored in MongoDB:
+- **Collections**: `menu_items`, `cake_designs`, `chat_history`
+- **Images**: Stored as binary data in MongoDB
+- **Conversations**: Persistent across sessions using localStorage
+
+## 🎨 UI Features
+
+- **Dark Modern Scientific Theme** - Professional dark UI with cyan accents
+- **Responsive Design** - Works on desktop and mobile
+- **Real-time Updates** - Instant feedback on all operations
+- **Chat History** - Auto-loads previous conversations
+
+## 🔧 Troubleshooting
+
+### MongoDB Connection Failed
+- Check MongoDB is running: `brew services list` (macOS) or `sudo systemctl status mongodb` (Linux)
+- Verify `MONGODB_URL` in `.env`
+- For Atlas: Check network access and credentials
+
+### Port Already in Use
+```bash
+lsof -ti :8891 | xargs kill -9
+```
+
+### Data Not Persisting
+- Check console for MongoDB connection message
+- Verify `.env` configuration
+- Check MongoDB logs
+
+## 📝 Workflow
 
 Based on the workflow diagram:
 
-1. **Input**: Order confirmation text screenshot (with sender confirmation and client name)
-2. **AI Extraction**: AI agent extracts information and generates JSON Orders for Google Sheet
+1. **Input**: Order confirmation text screenshot
+2. **AI Extraction**: Extract info and generate JSON Orders for Google Sheet
    - Columns: Customer, Total $$, Date-Time, Note, orderID
-3. **Order Details**: From Note and orderID, generate JSON OrderDetails
+3. **Order Details**: Generate JSON OrderDetails from Note and orderID
    - Create order details matching orderID
    - Create summary (total products each type by date)
-4. **Invoice Generation**: Generate PDF invoice with order details, datetime, name, address, style ID
+4. **Invoice Generation**: Generate PDF invoice with order details
 
-## API Endpoints
+## 🚧 Next Steps
 
-### Chat
-- `POST /api/chat` - Send a message to the chatbot
-- `POST /api/upload-image` - Upload an image for processing
-
-### Training
-- `GET /api/system-prompt` - Get current system prompt
-- `POST /api/system-prompt` - Update system prompt
-- `GET /api/menu` - Get shop menu
-- `POST /api/menu` - Update shop menu
-- `GET /api/cake-designs` - Get cake designs
-- `POST /api/cake-designs` - Update cake designs
-- `GET /api/conversion-instructions` - Get conversion instructions
-- `POST /api/conversion-instructions` - Update conversion instructions
-
-## Next Steps
-
-- [ ] Integrate with OpenAI/Anthropic API for actual AI responses
+- [ ] Integrate Google Sheets API
 - [ ] Implement OCR for image processing
-- [ ] Add Google Sheets integration
-- [ ] Implement PDF invoice generation
-- [ ] Add order processing workflow automation
+- [ ] Add PDF invoice generation
+- [ ] Implement order processing workflow automation
 
-## License
+## 📄 License
 
 [Your License Here]
 
-## Contributors
+## 👥 Contributors
 
 - Project Manager & Lead Software Engineer
 
+---
+
+**Made with ❤️ for efficient order processing**

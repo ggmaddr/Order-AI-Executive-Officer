@@ -3,6 +3,13 @@ Super Receptionist - AI Agent for Order Processing
 Main FastAPI application with chatbot and training interfaces
 """
 
+# Fix DNS resolution issue for MongoDB Atlas connections
+# This must be done BEFORE importing pymongo/database
+# Fixes issue where dnspython tries to open /etc/resolv.conf
+import dns.resolver
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8']
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,11 +20,22 @@ import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import database
 
 # Load environment variables from .env file
 load_dotenv()
 
-app = FastAPI(title="Super Receptionist AI Agent")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events"""
+    # Startup: Connect to MongoDB
+    await database.connect_to_mongo()
+    yield
+    # Shutdown: Close MongoDB connection
+    await database.close_mongo_connection()
+
+app = FastAPI(title="Super Receptionist AI Agent", lifespan=lifespan)
 
 # ============================================================================
 # AI AGENT API KEY CONFIGURATION
@@ -148,10 +166,13 @@ async def chat(message: ChatMessage):
     system_prompt_data = load_json_file(SYSTEM_PROMPT_FILE, {})
     system_prompt = system_prompt_data.get("prompt", "")
     
-    # Load training data for context
-    menu_data = load_json_file(MENU_FILE, {})
-    cake_designs_data = load_json_file(CAKE_DESIGNS_FILE, {})
+    # Load training data for context from MongoDB
+    menu_items = await database.get_all_menu_items()
+    cake_designs = await database.get_all_cake_designs()
     conversion_instructions_data = load_json_file(CONVERSION_INSTRUCTIONS_FILE, {})
+    
+    # Save user message to chat history
+    await database.save_chat_message(conversation_id, "user", message.message)
     
     # ============================================================================
     # AI AGENT INTEGRATION - Add your AI API calls here
@@ -176,14 +197,21 @@ async def chat(message: ChatMessage):
                 context = f"""
 System Prompt: {system_prompt}
 
-Shop Menu: {json.dumps(menu_data.get('items', []), indent=2)}
-Cake Designs: {json.dumps(cake_designs_data.get('designs', []), indent=2)}
+Shop Menu: {json.dumps(menu_items, indent=2)}
+Cake Designs: {json.dumps(cake_designs, indent=2)}
 Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
 """
                 
                 # Model selection - Use fast/cost-effective models for quick responses
-                # Options: "gpt-4o-mini" (fast, cheap), "gpt-3.5-turbo" (very fast), "gpt-4o" (better quality)
+                # Valid models: "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo"
+                # Note: "gpt-4" is deprecated/not available - use "gpt-4o" or "gpt-4-turbo" instead
                 model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                
+                # Fallback to valid model if invalid model specified
+                valid_models = ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo", "gpt-4o-2024-05-13"]
+                if model not in valid_models and not model.startswith("gpt-3.5") and not model.startswith("gpt-4o"):
+                    print(f"⚠️  Warning: Model '{model}' may not be valid. Using 'gpt-4o-mini' as fallback.")
+                    model = "gpt-4o-mini"
                 
                 response = client.chat.completions.create(
                     model=model,
@@ -196,8 +224,23 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                 )
                 response_text = response.choices[0].message.content
                 
+                # Save bot response to chat history
+                await database.save_chat_message(conversation_id, "bot", message.message, response_text)
+                
             except Exception as e:
-                response_text = f"Error calling AI API: {str(e)}"
+                error_msg = str(e)
+                if "model_not_found" in error_msg or "does not exist" in error_msg:
+                    response_text = (
+                        f"❌ Model Error: The model '{model}' is not available or you don't have access.\n\n"
+                        f"✅ Valid models you can use:\n"
+                        f"   • gpt-4o-mini (fast, cheap) - RECOMMENDED\n"
+                        f"   • gpt-3.5-turbo (very fast, cheapest)\n"
+                        f"   • gpt-4o (better quality)\n"
+                        f"   • gpt-4-turbo (high quality)\n\n"
+                        f"Update OPENAI_MODEL in your .env file and restart the server."
+                    )
+                else:
+                    response_text = f"Error calling AI API: {error_msg}"
         
         # ========================================================================
         # EXAMPLE: Anthropic Integration
@@ -216,8 +259,8 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                 context = f"""
 System Prompt: {system_prompt}
 
-Shop Menu: {json.dumps(menu_data.get('items', []), indent=2)}
-Cake Designs: {json.dumps(cake_designs_data.get('designs', []), indent=2)}
+Shop Menu: {json.dumps(menu_items, indent=2)}
+Cake Designs: {json.dumps(cake_designs, indent=2)}
 Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
 """
                 
@@ -230,6 +273,9 @@ Conversion Instructions: {conversion_instructions_data.get('instructions', '')}
                     ]
                 )
                 response_text = response.content[0].text
+                
+                # Save bot response to chat history
+                await database.save_chat_message(conversation_id, "bot", message.message, response_text)
                 
             except Exception as e:
                 response_text = f"Error calling AI API: {str(e)}"
@@ -262,27 +308,49 @@ async def update_system_prompt(update: SystemPromptUpdate):
 
 @app.get("/api/menu")
 async def get_menu():
-    """Get shop menu"""
-    return load_json_file(MENU_FILE, {"items": []})
+    """Get shop menu from MongoDB"""
+    try:
+        items = await database.get_all_menu_items()
+        return {"items": items}
+    except Exception as e:
+        print(f"Error getting menu: {e}")
+        return {"items": []}
 
 @app.post("/api/menu")
 async def update_menu(update: MenuUpdate):
-    """Update shop menu"""
-    menu_data = {"items": [item.dict() for item in update.items]}
-    save_json_file(MENU_FILE, menu_data)
-    return {"status": "success", "message": "Menu updated successfully"}
+    """Update shop menu in MongoDB"""
+    try:
+        items = [item.dict() for item in update.items]
+        success = await database.save_menu_items(items)
+        if success:
+            return {"status": "success", "message": "Menu updated successfully in MongoDB"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save menu")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating menu: {str(e)}")
 
 @app.get("/api/cake-designs")
 async def get_cake_designs():
-    """Get personalized cake designs"""
-    return load_json_file(CAKE_DESIGNS_FILE, {"designs": []})
+    """Get personalized cake designs from MongoDB"""
+    try:
+        designs = await database.get_all_cake_designs()
+        return {"designs": designs}
+    except Exception as e:
+        print(f"Error getting cake designs: {e}")
+        return {"designs": []}
 
 @app.post("/api/cake-designs")
 async def update_cake_designs(update: CakeDesignsUpdate):
-    """Update personalized cake designs"""
-    designs_data = {"designs": [design.dict() for design in update.designs]}
-    save_json_file(CAKE_DESIGNS_FILE, designs_data)
-    return {"status": "success", "message": "Cake designs updated successfully"}
+    """Update personalized cake designs in MongoDB"""
+    try:
+        designs = [design.dict() for design in update.designs]
+        success = await database.save_cake_designs(designs)
+        if success:
+            return {"status": "success", "message": "Cake designs updated successfully in MongoDB"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save cake designs")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating cake designs: {str(e)}")
 
 @app.get("/api/conversion-instructions")
 async def get_conversion_instructions():
@@ -308,6 +376,37 @@ async def upload_image(file: UploadFile = File(...)):
         "message": "Image uploaded successfully",
         "filename": file.filename
     }
+
+# Chat History Endpoints
+@app.get("/api/chat/history/{conversation_id}")
+async def get_chat_history(conversation_id: str):
+    """Get chat history for a conversation"""
+    try:
+        messages = await database.get_chat_history(conversation_id)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting chat history: {str(e)}")
+
+@app.get("/api/chat/conversations")
+async def get_all_conversations():
+    """Get all conversation IDs"""
+    try:
+        conversations = await database.get_all_conversations()
+        return {"conversations": conversations}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting conversations: {str(e)}")
+
+@app.delete("/api/chat/history/{conversation_id}")
+async def delete_chat_history(conversation_id: str):
+    """Delete a conversation"""
+    try:
+        success = await database.delete_conversation(conversation_id)
+        if success:
+            return {"status": "success", "message": "Conversation deleted"}
+        else:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting conversation: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

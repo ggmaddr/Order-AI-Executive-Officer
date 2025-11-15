@@ -1,11 +1,44 @@
 // Global state
-let conversationId = 'conv_' + Date.now();
+// Persistent conversation ID using localStorage
+let conversationId = localStorage.getItem('conversationId') || 'conv_' + Date.now();
+localStorage.setItem('conversationId', conversationId);
+
 let menuItemCounter = 0;
 let cakeDesignCounter = 0;
 let exampleCounter = 0;
 
 // API base URL
 const API_BASE = '/api';
+
+// Load chat history on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadChatHistory();
+});
+
+async function loadChatHistory() {
+    try {
+        const response = await fetch(`${API_BASE}/chat/history/${conversationId}`);
+        const data = await response.json();
+        
+        if (data.messages && data.messages.length > 0) {
+            const messagesContainer = document.getElementById('chat-messages');
+            // Clear the default welcome message
+            messagesContainer.innerHTML = '';
+            
+            // Load all messages from history
+            data.messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    addMessageToChat(msg.message, 'user');
+                } else if (msg.role === 'bot' && msg.response) {
+                    addMessageToChat(msg.response, 'bot');
+                }
+            });
+        }
+    } catch (error) {
+        console.log('No chat history found or error loading:', error);
+        // Keep default welcome message
+    }
+}
 
 // Navigation
 function showSection(section) {
