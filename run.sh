@@ -23,7 +23,8 @@ echo "📁 Creating data directories..."
 mkdir -p data/training
 
 # Start the server
-echo "🌟 Starting server on http://localhost:8000"
+PORT=${PORT:-8000}
+echo "🌟 Starting server on http://localhost:${PORT}"
 echo "Press Ctrl+C to stop the server"
 echo ""
 python app.py

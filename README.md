@@ -50,7 +50,7 @@ Four training interfaces for shop owners to customize the AI agent:
    MONGODB_DB_NAME=super_receptionist
 
    # Server
-   PORT=8891
+   PORT=8000
    ```
 
 3. **Start the application:**
@@ -60,15 +60,123 @@ Four training interfaces for shop owners to customize the AI agent:
 
 4. **Open in browser:**
    ```
-   http://localhost:8891
+   http://localhost:8000
    ```
 
-## 📚 Documentation
+## 🌐 Deployment
 
-- **[QUICK_START.md](QUICK_START.md)** - Complete setup guide
-- **[MONGODB_SETUP.md](MONGODB_SETUP.md)** - MongoDB installation and configuration
-- **[API_KEY_SETUP.md](API_KEY_SETUP.md)** - AI API key configuration
-- **[PORT_MANAGEMENT.md](PORT_MANAGEMENT.md)** - Port management guide
+### Option 1: Render.com (Recommended - Free Tier Available)
+
+1. **Create account** at [render.com](https://render.com)
+
+2. **Create new Web Service:**
+   - Connect your GitHub repository
+   - Select "Web Service"
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `python app.py`
+
+3. **Set Environment Variables** in Render dashboard:
+   ```
+   PORT=8000
+   MONGODB_URL=your_mongodb_atlas_connection_string
+   MONGODB_DB_NAME=super_receptionist
+   OPENAI_API_KEY=your_openai_key
+   OPENAI_MODEL=gpt-4o-mini
+   AI_PROVIDER=openai
+   ```
+
+4. **Deploy** - Render will automatically deploy on every push to main branch
+
+### Option 2: Railway.app
+
+1. **Create account** at [railway.app](https://railway.app)
+
+2. **Deploy from GitHub:**
+   - Click "New Project"
+   - Select "Deploy from GitHub repo"
+   - Choose your repository
+
+3. **Add Environment Variables:**
+   - Click on your service → Variables
+   - Add all variables from `.env` file
+
+4. **Deploy** - Railway auto-detects Python and deploys automatically
+
+### Option 3: Docker Deployment
+
+1. **Build Docker image:**
+   ```bash
+   docker build -t super-receptionist .
+   ```
+
+2. **Run container:**
+   ```bash
+   docker run -p 8000:8000 \
+     -e MONGODB_URL=your_mongodb_url \
+     -e MONGODB_DB_NAME=super_receptionist \
+     -e OPENAI_API_KEY=your_key \
+     -e OPENAI_MODEL=gpt-4o-mini \
+     super-receptionist
+   ```
+
+3. **Or use docker-compose:**
+   ```yaml
+   version: '3.8'
+   services:
+     app:
+       build: .
+       ports:
+         - "8000:8000"
+       environment:
+         - MONGODB_URL=${MONGODB_URL}
+         - MONGODB_DB_NAME=${MONGODB_DB_NAME}
+         - OPENAI_API_KEY=${OPENAI_API_KEY}
+         - OPENAI_MODEL=${OPENAI_MODEL}
+   ```
+
+### Option 4: Fly.io
+
+1. **Install Fly CLI:**
+   ```bash
+   curl -L https://fly.io/install.sh | sh
+   ```
+
+2. **Login and create app:**
+   ```bash
+   fly auth login
+   fly launch
+   ```
+
+3. **Set secrets:**
+   ```bash
+   fly secrets set MONGODB_URL=your_url
+   fly secrets set OPENAI_API_KEY=your_key
+   ```
+
+4. **Deploy:**
+   ```bash
+   fly deploy
+   ```
+
+### Environment Variables Required
+
+All platforms need these environment variables:
+
+```env
+# MongoDB (Required)
+MONGODB_URL=mongodb+srv://user:pass@cluster.mongodb.net/dbname
+MONGODB_DB_NAME=super_receptionist
+
+# AI Provider (Required)
+OPENAI_API_KEY=sk-your-key-here
+OPENAI_MODEL=gpt-4o-mini
+AI_PROVIDER=openai
+
+# Server (Optional - defaults to 8000)
+PORT=8000
+```
+
+**Note:** For production, use MongoDB Atlas (cloud) instead of local MongoDB.
 
 ## 🏗️ Project Structure
 
@@ -124,7 +232,7 @@ All data is stored in MongoDB:
 
 ### Port Already in Use
 ```bash
-lsof -ti :8891 | xargs kill -9
+lsof -ti :8000 | xargs kill -9
 ```
 
 ### Data Not Persisting

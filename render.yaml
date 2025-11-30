@@ -1,0 +1,18 @@
+# Render.com deployment configuration
+services:
+  - type: web
+    name: super-receptionist
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    # Add your environment variables in Render dashboard:
+    # - MONGODB_URL
+    # - MONGODB_DB_NAME
+    # - OPENAI_API_KEY (or ANTHROPIC_API_KEY)
+    # - AI_PROVIDER
+

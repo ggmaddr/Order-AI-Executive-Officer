@@ -541,6 +541,6 @@ async def delete_chat_history(conversation_id: str):
 if __name__ == "__main__":
     import uvicorn
     import os
-    port = int(os.getenv("PORT", "8891"))
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host="0.0.0.0", port=port)
 

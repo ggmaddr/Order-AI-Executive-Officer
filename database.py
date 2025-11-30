@@ -3,10 +3,129 @@ MongoDB Database Connection and Models
 Handles all database operations for menu, cake designs, and chat history
 """
 
+# ============================================================================
+# DNS RESOLVER PATCHING - MUST BE BEFORE ANY pymongo IMPORTS
+# ============================================================================
+# Fix DNS resolution issues by forcing Google DNS (8.8.8.8)
+# This prevents "no nameservers" errors when connecting to MongoDB Atlas
+import dns.resolver
+import dns.asyncresolver
 
+# Configure sync DNS resolver to use Google DNS instead of reading /etc/resolv.conf
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8']
+
+# Configure async DNS resolver (used by pymongo's AsyncMongoClient)
+try:
+    dns.asyncresolver.default_resolver = dns.asyncresolver.Resolver(configure=False)
+    dns.asyncresolver.default_resolver.nameservers = ['8.8.8.8']
+except:
+    pass
+
+# Patch Resolver.__init__ to ALWAYS use our configured nameservers
+_original_resolver_init = dns.resolver.Resolver.__init__
+
+def _patched_resolver_init(self, filename=None, configure=True):
+    _original_resolver_init(self, filename, configure=False)
+    self.nameservers = ['8.8.8.8']
+    if not hasattr(self, 'timeout') or self.timeout is None:
+        self.timeout = 5.0
+    if not hasattr(self, 'lifetime') or self.lifetime is None:
+        self.lifetime = 10.0
+
+dns.resolver.Resolver.__init__ = _patched_resolver_init
+
+# Patch asyncresolver.Resolver.__init__ as well
+try:
+    _original_async_resolver_init = dns.asyncresolver.Resolver.__init__
+    def _patched_async_resolver_init(self, filename=None, configure=True):
+        _original_async_resolver_init(self, filename, configure=False)
+        self.nameservers = ['8.8.8.8']
+        if not hasattr(self, 'timeout') or self.timeout is None:
+            self.timeout = 5.0
+        if not hasattr(self, 'lifetime') or self.lifetime is None:
+            self.lifetime = 10.0
+    dns.asyncresolver.Resolver.__init__ = _patched_async_resolver_init
+except:
+    pass
+
+# ============================================================================
+# END DNS RESOLVER PATCHING
+# ============================================================================
 
 from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure
+
+# Additional patching: Ensure pymongo's internal resolvers use our DNS
+try:
+    # Patch pymongo's _SrvResolver if it exists
+    from pymongo import srv_resolver
+    if hasattr(srv_resolver, '_SrvResolver'):
+        _original_srv_resolve = srv_resolver._SrvResolver._resolve_uri
+        def _patched_srv_resolve(self, uri):
+            # Ensure resolver uses our nameservers
+            if hasattr(self, 'resolver'):
+                self.resolver.nameservers = ['8.8.8.8']
+            return _original_srv_resolve(self, uri)
+        srv_resolver._SrvResolver._resolve_uri = _patched_srv_resolve
+except:
+    pass
+
+# Also patch any resolver that pymongo might create internally
+try:
+    # Ensure any new resolver instance uses our nameservers
+    _original_get_default_resolver = dns.resolver.get_default_resolver
+    def _patched_get_default_resolver():
+        resolver = _original_get_default_resolver()
+        resolver.nameservers = ['8.8.8.8']
+        return resolver
+    dns.resolver.get_default_resolver = _patched_get_default_resolver
+except:
+    pass
+
+# Patch resolver.query and resolver.resolve to ensure nameservers are set
+try:
+    _original_query = dns.resolver.Resolver.query
+    def _patched_query(self, *args, **kwargs):
+        if not self.nameservers:
+            self.nameservers = ['8.8.8.8']
+        return _original_query(self, *args, **kwargs)
+    dns.resolver.Resolver.query = _patched_query
+except:
+    pass
+
+try:
+    _original_resolve = dns.resolver.Resolver.resolve
+    def _patched_resolve(self, *args, **kwargs):
+        if not self.nameservers:
+            self.nameservers = ['8.8.8.8']
+        return _original_resolve(self, *args, **kwargs)
+    dns.resolver.Resolver.resolve = _patched_resolve
+except:
+    pass
+
+# Patch async resolver methods as well
+try:
+    if hasattr(dns.asyncresolver.Resolver, 'resolve'):
+        _original_async_resolve = dns.asyncresolver.Resolver.resolve
+        async def _patched_async_resolve(self, *args, **kwargs):
+            if not self.nameservers:
+                self.nameservers = ['8.8.8.8']
+            return await _original_async_resolve(self, *args, **kwargs)
+        dns.asyncresolver.Resolver.resolve = _patched_async_resolve
+except:
+    pass
+
+try:
+    if hasattr(dns.asyncresolver.Resolver, 'query'):
+        _original_async_query = dns.asyncresolver.Resolver.query
+        async def _patched_async_query(self, *args, **kwargs):
+            if not self.nameservers:
+                self.nameservers = ['8.8.8.8']
+            return await _original_async_query(self, *args, **kwargs)
+        dns.asyncresolver.Resolver.query = _patched_async_query
+except:
+    pass
 from typing import Optional, List, Dict
 import os
 from datetime import datetime
@@ -28,6 +147,19 @@ MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "super_receptionist")  # Default 
 # Global database connection
 client: Optional[AsyncMongoClient] = None
 db = None
+
+def ensure_dns_configured():
+    """Ensure DNS resolvers are configured before database operations"""
+    try:
+        # Re-apply DNS configuration to ensure it's still set
+        if hasattr(dns.resolver, 'default_resolver'):
+            if not dns.resolver.default_resolver.nameservers:
+                dns.resolver.default_resolver.nameservers = ['8.8.8.8']
+        if hasattr(dns.asyncresolver, 'default_resolver'):
+            if not dns.asyncresolver.default_resolver.nameservers:
+                dns.asyncresolver.default_resolver.nameservers = ['8.8.8.8']
+    except:
+        pass
 
 async def connect_to_mongo():
     """Connect to MongoDB"""
@@ -189,8 +321,15 @@ async def save_cake_designs(designs: List[Dict]):
 async def save_chat_message(conversation_id: str, role: str, message: str, response: Optional[str] = None):
     """Save a chat message to history - ALWAYS saves to maintain full history"""
     try:
+        # Ensure DNS is configured before operation
+        ensure_dns_configured()
+        
         if db is None:
-            return False
+            logger.warning("Database not connected, attempting to reconnect...")
+            await connect_to_mongo()
+            if db is None:
+                return False
+        
         collection = get_chat_history_collection()
         chat_doc = {
             'conversation_id': conversation_id,
@@ -203,6 +342,24 @@ async def save_chat_message(conversation_id: str, role: str, message: str, respo
         return True
     except Exception as e:
         logger.error(f"Error saving chat message: {e}")
+        # Try to reconnect if connection was lost
+        try:
+            ensure_dns_configured()
+            await connect_to_mongo()
+            # Retry once
+            if db is not None:
+                collection = get_chat_history_collection()
+                chat_doc = {
+                    'conversation_id': conversation_id,
+                    'role': role,
+                    'message': message,
+                    'response': response,
+                    'timestamp': datetime.utcnow()
+                }
+                await collection.insert_one(chat_doc)
+                return True
+        except:
+            pass
         return False
 
 async def get_chat_history(conversation_id: str, limit: int = 10000) -> List[Dict]:
